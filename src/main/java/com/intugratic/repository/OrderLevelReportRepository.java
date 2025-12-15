@@ -1,10 +1,9 @@
 package com.intugratic.repository;
 
-import com.intugratic.entities.OrderLevelReport;
+import com.intugratic.entity.OrderLevelReportEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface OrderLevelReportRepository
-        extends JpaRepository<OrderLevelReport, Long> {
-
-    boolean existsByOrderId(String orderId);
+        extends JpaRepository<OrderLevelReportEntity, Long> {
 }
+

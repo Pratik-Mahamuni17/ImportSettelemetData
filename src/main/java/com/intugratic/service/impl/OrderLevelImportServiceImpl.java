@@ -1,33 +1,28 @@
 package com.intugratic.service.impl;
 
-import org.apache.poi.ss.usermodel.Cell;
-import org.apache.poi.ss.usermodel.CellType;
-import org.apache.poi.ss.usermodel.DateUtil;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.intugratic.entities.OrderLevelReport;
+import com.intugratic.dto.OrderLevelReportDTO;
+import com.intugratic.entity.OrderLevelReportEntity;
 import com.intugratic.repository.OrderLevelReportRepository;
 import com.intugratic.service.OrderLevelImportService;
-import org.apache.poi.ss.usermodel.DataFormatter;
-import org.apache.poi.ss.usermodel.Sheet;
-import org.apache.poi.ss.usermodel.Workbook;
-import org.apache.poi.ss.usermodel.WorkbookFactory;
+import com.intugratic.service.mapper.OrderLevelExcelMapper;
+import jakarta.transaction.Transactional;
+import org.apache.poi.ss.usermodel.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
-import org.apache.poi.ss.usermodel.Row;
 
-import java.time.LocalDate;
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 
 @Service
+@Transactional
 public class OrderLevelImportServiceImpl implements OrderLevelImportService {
 
+    private final OrderLevelExcelMapper mapper;
     private final OrderLevelReportRepository repository;
-    private final DataFormatter formatter = new DataFormatter();
-    private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public OrderLevelImportServiceImpl(OrderLevelReportRepository repository) {
+    public OrderLevelImportServiceImpl(OrderLevelExcelMapper mapper,
+                                       OrderLevelReportRepository repository) {
+        this.mapper = mapper;
         this.repository = repository;
     }
 
@@ -35,83 +30,108 @@ public class OrderLevelImportServiceImpl implements OrderLevelImportService {
     public void importExcel(MultipartFile file) throws Exception {
 
         Workbook workbook = WorkbookFactory.create(file.getInputStream());
+        FormulaEvaluator evaluator = workbook.getCreationHelper().createFormulaEvaluator();
+        Sheet sheet = workbook.getSheet("Order Level");
 
-        // find order-level sheet
-        Sheet sheet = null;
-        for (int i = 0; i < workbook.getNumberOfSheets(); i++) {
-            Sheet temp = workbook.getSheetAt(i);
-            if (temp.getSheetName().toLowerCase().contains("order")) {
-                sheet = temp;
-                break;
-            }
-        }
+        DataFormatter formatter = new DataFormatter();
+        List<OrderLevelReportEntity> entities = new ArrayList<>();
 
-        if (sheet == null) {
-            throw new RuntimeException("Order level sheet not found");
-        }
-
-        int HEADER_ROW = 6;   // header row
-        int START_ROW  = 8;   // first order row
-
-        Row headerRow = sheet.getRow(HEADER_ROW);
-
-        for (int i = START_ROW; i <= sheet.getLastRowNum(); i++) {
+        for (int i = 8; i <= sheet.getLastRowNum(); i++) {
 
             Row row = sheet.getRow(i);
             if (row == null) continue;
 
-            String orderId = getString(row.getCell(1));
-            LocalDate orderDate = getDate(row.getCell(2));
+            // Guard 1: Order ID
+            String orderId = formatter.formatCellValue(row.getCell(1)).trim();
+            if (orderId.isEmpty() || orderId.equalsIgnoreCase("Order ID")) continue;
 
-            if (orderId == null || orderId.isEmpty() || orderDate == null) {
-                continue;
-            }
+            // Guard 2: Subtotal must exist
+            String subtotal = formatter.formatCellValue(row.getCell(14)).trim();
+            if (subtotal.isEmpty()) continue;
 
-            if (repository.existsByOrderId(orderId)) {
-                continue;
-            }
-
-            // 🔑 Build JSON dynamically for ALL columns
-            Map<String, String> rowData = new LinkedHashMap<>();
-
-            for (int c = 0; c < headerRow.getLastCellNum(); c++) {
-                String header = formatter.formatCellValue(headerRow.getCell(c));
-                String value  = formatter.formatCellValue(row.getCell(c));
-                rowData.put(header, value);
-            }
-
-            String json = objectMapper.writeValueAsString(rowData);
-
-            OrderLevelReport report = new OrderLevelReport();
-            report.setOrderId(orderId);
-            report.setOrderDate(orderDate);
-            report.setOrderLevelJson(json);
-
-            repository.save(report);
+            OrderLevelReportDTO dto = mapper.map(row, evaluator);
+            entities.add(toEntity(dto));
         }
 
+        repository.saveAll(entities);
         workbook.close();
     }
 
-    // ---------- helpers ----------
+    private OrderLevelReportEntity toEntity(OrderLevelReportDTO dto) {
 
-    private String getString(Cell cell) {
-        return cell == null ? null : formatter.formatCellValue(cell).trim();
+        OrderLevelReportEntity e = new OrderLevelReportEntity();
+
+        e.setSno(dto.getSno());
+        e.setOrderId(dto.getOrderId());
+        e.setOrderDate(dto.getOrderDate());
+        e.setWeekNo(dto.getWeekNo());
+        e.setRestaurantName(dto.getRestaurantName());
+        e.setRestaurantId(dto.getRestaurantId());
+        e.setDiscountConstruct(dto.getDiscountConstruct());
+        e.setModeOfPayment(dto.getModeOfPayment());
+        e.setOrderStatus(dto.getOrderStatus());
+        e.setCancellationPolicy(dto.getCancellationPolicy());
+        e.setCancellationReason(dto.getCancellationReason());
+        e.setCancelledRejectedState(dto.getCancelledRejectedState());
+        e.setOrderType(dto.getOrderType());
+        e.setDeliveryStateCode(dto.getDeliveryStateCode());
+
+        e.setSubtotal(dto.getSubtotal());
+        e.setPackagingCharge(dto.getPackagingCharge());
+        e.setDeliveryChargeSelfLogistics(dto.getDeliveryChargeSelfLogistics());
+        e.setRestaurantDiscountPromo(dto.getRestaurantDiscountPromo());
+        e.setRestaurantDiscountOther(dto.getRestaurantDiscountOther());
+        e.setBrandPackSubscriptionFee(dto.getBrandPackSubscriptionFee());
+        e.setDeliveryChargeDiscount(dto.getDeliveryChargeDiscount());
+        e.setTotalGstCollected(dto.getTotalGstCollected());
+        e.setNetOrderValue(dto.getNetOrderValue());
+
+        e.setCommissionableSubtotal(dto.getCommissionableSubtotal());
+        e.setCommissionablePackagingCharge(dto.getCommissionablePackagingCharge());
+        e.setCommissionableGst(dto.getCommissionableGst());
+        e.setTotalCommissionableValue(dto.getTotalCommissionableValue());
+
+        e.setBaseServiceFeePercent(dto.getBaseServiceFeePercent());
+        e.setBaseServiceFee(dto.getBaseServiceFee());
+        e.setActualOrderDistanceKm(dto.getActualOrderDistanceKm());
+        e.setLongDistanceEnablementFee(dto.getLongDistanceEnablementFee());
+        e.setDiscountOnLongDistanceFee(dto.getDiscountOnLongDistanceFee());
+        e.setDiscountOnServiceFeeCapping(dto.getDiscountOnServiceFeeCapping());
+        e.setPaymentMechanismFee(dto.getPaymentMechanismFee());
+
+        e.setServiceFeeAndPaymentMechanismFee(dto.getServiceFeeAndPaymentMechanismFee());
+        e.setTaxesOnServiceFee(dto.getTaxesOnServiceFee());
+        e.setApplicableAmountForTcs(dto.getApplicableAmountForTcs());
+        e.setApplicableAmountForSection95(dto.getApplicableAmountForSection95());
+        e.setTaxCollectedAtSource(dto.getTaxCollectedAtSource());
+        e.setTcsIgstAmount(dto.getTcsIgstAmount());
+        e.setTds194OAmount(dto.getTds194OAmount());
+        e.setGstPaidByZomato(dto.getGstPaidByZomato());
+        e.setGstToBePaidByRestaurant(dto.getGstToBePaidByRestaurant());
+
+        e.setGovernmentCharges(dto.getGovernmentCharges());
+        e.setCustomerCompensation(dto.getCustomerCompensation());
+        e.setDeliveryChargesRecovery(dto.getDeliveryChargesRecovery());
+        e.setAmountReceivedInCash(dto.getAmountReceivedInCash());
+        e.setCreditDebitNoteAdjustment(dto.getCreditDebitNoteAdjustment());
+        e.setPromoRecoveryAdjustment(dto.getPromoRecoveryAdjustment());
+        e.setExtraInventoryAds(dto.getExtraInventoryAds());
+        e.setBrandLoyaltyPointsRedemption(dto.getBrandLoyaltyPointsRedemption());
+        e.setExpressOrderFee(dto.getExpressOrderFee());
+
+        e.setOtherOrderLevelDeductions(dto.getOtherOrderLevelDeductions());
+        e.setNetDeductions(dto.getNetDeductions());
+        e.setNetAdditions(dto.getNetAdditions());
+        e.setOrderLevelPayout(dto.getOrderLevelPayout());
+
+        e.setSettlementStatus(dto.getSettlementStatus());
+        e.setSettlementDate(dto.getSettlementDate());
+        e.setBankUtr(dto.getBankUtr());
+        e.setUnsettledAmount(dto.getUnsettledAmount());
+        e.setCustomerId(dto.getCustomerId());
+
+        return e;
     }
 
-    private LocalDate getDate(Cell cell) {
-        try {
-            if (cell == null) return null;
-
-            if (cell.getCellType() == CellType.NUMERIC && DateUtil.isCellDateFormatted(cell)) {
-                return cell.getLocalDateTimeCellValue().toLocalDate();
-            }
-
-            String value = formatter.formatCellValue(cell).trim();
-            return value.isEmpty() ? null : LocalDate.parse(value.substring(0, 10));
-
-        } catch (Exception e) {
-            return null;
-        }
-    }
 }
+
